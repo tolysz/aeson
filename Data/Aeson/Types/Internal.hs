@@ -180,6 +180,7 @@ data Value = Object !Object
            | Number !Scientific
            | Bool !Bool
            | Null
+           | Missing
              deriving (Eq, Show, Typeable, Data)
 
 -- | A newtype wrapper for 'UTCTime' that uses the same non-standard
@@ -200,6 +201,7 @@ instance NFData Value where
     rnf (Number n) = rnf n
     rnf (Bool b)   = rnf b
     rnf Null       = ()
+    rnf Missing    = ()
 
 instance IsString Value where
     fromString = String . pack
@@ -214,6 +216,7 @@ hashValue s (String str) = s `hashWithSalt` (2::Int) `hashWithSalt` str
 hashValue s (Number n)   = s `hashWithSalt` (3::Int) `hashWithSalt` n
 hashValue s (Bool b)     = s `hashWithSalt` (4::Int) `hashWithSalt` b
 hashValue s Null         = s `hashWithSalt` (5::Int)
+hashValue s Missing      = s `hashWithSalt` (6::Int)
 
 instance Hashable Value where
     hashWithSalt = hashValue
