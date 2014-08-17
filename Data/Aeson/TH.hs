@@ -868,6 +868,7 @@ valueConName (String _) = "String"
 valueConName (Number _) = "Number"
 valueConName (Bool   _) = "Boolean"
 valueConName Null       = "Null"
+valueConName Missing    = "Missing"
 
 applyCon :: Name -> [Name] -> Q [Pred]
 applyCon con typeNames = return (map apply typeNames)
