@@ -216,7 +216,7 @@ hashValue s (String str) = s `hashWithSalt` (2::Int) `hashWithSalt` str
 hashValue s (Number n)   = s `hashWithSalt` (3::Int) `hashWithSalt` n
 hashValue s (Bool b)     = s `hashWithSalt` (4::Int) `hashWithSalt` b
 hashValue s Null         = s `hashWithSalt` (5::Int)
-hashValue s Null         = s `hashWithSalt` (6::Int)
+hashValue s Missing      = s `hashWithSalt` (6::Int)
 
 instance Hashable Value where
     hashWithSalt = hashValue
