@@ -7,6 +7,11 @@
 {-# LANGUAGE DefaultSignatures #-}
 #endif
 
+-- TODO: Drop this when we remove support for Data.Attoparsec.Number
+#if MIN_VERSION_attoparsec(0,12,0)
+{-# OPTIONS_GHC -fno-warn-deprecations #-}
+#endif
+
 -- |
 -- Module:      Data.Aeson.Types.Instances
 -- Copyright:   (c) 2011-2013 Bryan O'Sullivan
@@ -71,7 +76,11 @@ import Data.Traversable (traverse)
 import Data.Vector (Vector)
 import Data.Word (Word, Word8, Word16, Word32, Word64)
 import Foreign.Storable (Storable)
+#if MIN_VERSION_time(1,5,0)
+import Data.Time.Format(defaultTimeLocale, dateTimeFmt)
+#else
 import System.Locale (defaultTimeLocale, dateTimeFmt)
+#endif
 import qualified Data.HashMap.Strict as H
 import qualified Data.HashSet as HashSet
 import qualified Data.IntMap as IntMap
@@ -950,7 +959,7 @@ instance (ToJSON a, ToJSON b, ToJSON c, ToJSON d, ToJSON e, ToJSON f,
           ToJSON m, ToJSON n, ToJSON o) =>
          ToJSON (a,b,c,d,e,f,g,h,i,j,k,l,m,n,o) where
     toJSON (a,b,c,d,e,f,g,h,i,j,k,l,m,n,o) = Array $ V.create $ do
-      mv <- VM.unsafeNew 14
+      mv <- VM.unsafeNew 15
       VM.unsafeWrite mv 0 (toJSON a)
       VM.unsafeWrite mv 1 (toJSON b)
       VM.unsafeWrite mv 2 (toJSON c)
@@ -977,7 +986,7 @@ instance (FromJSON a, FromJSON b, FromJSON c, FromJSON d, FromJSON e,
         let n = V.length ary
         in if n /= 15
            then fail $ "cannot unpack array of length " ++
-                       show n ++ " into a 14-tuple"
+                       show n ++ " into a 15-tuple"
            else (,,,,,,,,,,,,,,)
                 <$> parseJSON (V.unsafeIndex ary 0)
                 <*> parseJSON (V.unsafeIndex ary 1)
