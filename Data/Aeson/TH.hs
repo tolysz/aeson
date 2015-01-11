@@ -77,7 +77,7 @@ module Data.Aeson.TH
 --------------------------------------------------------------------------------
 
 -- from aeson:
-import Data.Aeson ( toJSON, Object, object, (.=), (.:), (.:?)
+import Data.Aeson ( toJSON, Object, object, (.=), (.:), (.:?), (.:??)
                   , ToJSON, toJSON
                   , FromJSON, parseJSON
                   )
@@ -100,6 +100,7 @@ import Data.List           ( (++), foldl, foldl', intercalate
                            , length, map, zip, genericLength, all, partition
                            )
 import Data.Maybe          ( Maybe(Nothing, Just), catMaybes, maybe )
+import Data.Possible       ( Possible(..))
 import Prelude             ( String, (-), Integer, fromIntegral, error, lookup)
 import Text.Printf         ( printf )
 import Text.Show           ( show )
@@ -759,6 +760,9 @@ instance (FromJSON a) => LookupField a where
 
 instance (FromJSON a) => LookupField (Maybe a) where
     lookupField _ _ _ = (.:?)
+
+instance (FromJSON a) => LookupField (Possible a) where
+    lookupField _ _ _ = (.:??)
 
 unknownFieldFail :: String -> String -> String -> Parser fail
 unknownFieldFail tName rec key =

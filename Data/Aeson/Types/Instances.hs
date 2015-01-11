@@ -1,6 +1,6 @@
 {-# LANGUAGE CPP, DeriveDataTypeable, FlexibleContexts, FlexibleInstances,
     GeneralizedNewtypeDeriving, IncoherentInstances, OverlappingInstances,
-    OverloadedStrings, UndecidableInstances, ViewPatterns #-}
+    OverloadedStrings, UndecidableInstances, ViewPatterns, LambdaCase #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 
 #ifdef GENERICS
@@ -52,6 +52,7 @@ module Data.Aeson.Types.Instances
     , (.:)
     , (.:?)
     , (.!=)
+    , (.:??)
     , (.=)
     , typeMismatch
     ) where
@@ -67,6 +68,7 @@ import Data.Fixed
 import Data.Hashable (Hashable(..))
 import Data.Int (Int8, Int16, Int32, Int64)
 import Data.Maybe (fromMaybe)
+import Data.Possible (Possible(..))
 import Data.Monoid (Dual(..), First(..), Last(..), mappend)
 import Data.Ratio (Ratio, (%), numerator, denominator)
 import Data.Text (Text, pack, unpack)
@@ -103,9 +105,23 @@ instance (ToJSON a) => ToJSON (Maybe a) where
     {-# INLINE toJSON #-}
 
 instance (FromJSON a) => FromJSON (Maybe a) where
-    parseJSON Null   = pure Nothing
-    parseJSON a      = Just <$> parseJSON a
+    parseJSON Null    = pure Nothing
+    parseJSON Missing = pure Nothing
+    parseJSON a       = Just <$> parseJSON a
     {-# INLINE parseJSON #-}
+
+instance (ToJSON a) => ToJSON (Possible a) where
+  toJSON MissingData  = Missing
+  toJSON HaveNull     = Null
+  toJSON (HaveData a) = toJSON a
+  {-# INLINE toJSON #-}
+
+instance FromJSON a => FromJSON (Possible a) where
+   parseJSON a = parseJSON a >>= \case
+         Null    -> pure HaveNull
+         Missing -> pure MissingData
+         a    -> HaveData <$> parseJSON a
+   {-# INLINE parseJSON #-}
 
 instance (ToJSON a, ToJSON b) => ToJSON (Either a b) where
     toJSON (Left a)  = object [left  .= a]
@@ -1106,6 +1122,16 @@ obj .:? key = case H.lookup key obj of
                Nothing -> pure Nothing
                Just v  -> parseJSON v
 {-# INLINE (.:?) #-}
+
+-- need a way to distinguish Null and Missing
+-- todo : fix triplecase
+(.:??) :: (FromJSON a) => Object -> Text -> Parser (Possible a)
+obj .:?? key = case H.lookup key obj of
+               Nothing -> pure MissingData
+               Just v  -> parseJSON v
+-- (.:??)  _ = pure HaveNull
+-- (.:??) v s = (v .:? s ) <|> (pure MissingData)
+{-# INLINE (.:??) #-}
 
 -- | Helper for use in combination with '.:?' to provide default
 -- values for optional JSON object fields.
