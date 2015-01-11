@@ -10,3 +10,5 @@ benchmarks/AesonEncode
 tests/qc
 
 cabal.sandbox.config
+aeson.iml
+.idea

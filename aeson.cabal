@@ -113,7 +113,8 @@ library
     template-haskell >= 2.4,
     text >= 1.1.1.0,
     unordered-containers >= 0.2.3.0,
-    vector >= 0.7.1
+    vector >= 0.7.1,
+    possible >= 0.1.0.1
 
   if flag(old-locale)
     build-depends: time < 1.5, old-locale
