@@ -47,6 +47,9 @@ encode :: ToJSON a => a -> L.ByteString
 encode = B.toLazyByteString . fromEncoding . toEncoding
 {-# INLINE encode #-}
 
+removeMissing :: [(a,Value)] -> [(a,Value)]
+removeMissing = filter (\(_,v) -> v /= Missing)
+
 -- | Encode a JSON 'Value' to a "Data.Text" 'Builder', which can be
 -- embedded efficiently in a text-based protocol.
 --
@@ -69,12 +72,13 @@ encodeToTextBuilder =
                       V.foldr f (singleton ']') (V.unsafeTail v)
       where f a z = singleton ',' <> go a <> z
     go (Object m) = {-# SCC "go/Object" #-}
-        case H.toList m of
+        case removeMissing (H.toList m) of
           (x:xs) -> singleton '{' <> one x <> foldr f (singleton '}') xs
           _      -> "{}"
       where f a z     = singleton ',' <> one a <> z
             one (k,v) = string k <> singleton ':' <> go v
-
+    go Missing    = {-# SCC "go/Missing" #-} ""
+        -- however should not happen unless ussed in array...
 {-# DEPRECATED fromValue "Use 'encodeToTextBuilder' instead" #-}
 fromValue :: Value -> Builder
 fromValue = encodeToTextBuilder

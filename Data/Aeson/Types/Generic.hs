@@ -31,6 +31,7 @@ import Data.ByteString.Builder as B
 import Data.Monoid ((<>), mempty)
 import Data.DList (DList, toList, empty)
 import Data.Maybe (fromMaybe)
+import Data.Possible (Possible)
 import Data.Text (Text, pack, unpack)
 import GHC.Generics
 import qualified Data.HashMap.Strict as H
@@ -661,6 +662,13 @@ instance (Selector s, FromJSON a) => FromRecord (S1 s (K1 i (Maybe a))) where
         where
           label = fieldLabelModifier opts $
                     selName (undefined :: t s (K1 i (Maybe a)) p)
+    {-# INLINE parseRecord #-}
+
+instance (Selector s, FromJSON a) => FromRecord (S1 s (K1 i (Possible a))) where
+    parseRecord opts _ obj = (M1 . K1) <$> obj .:?? pack label
+        where
+          label = fieldLabelModifier opts $
+                    selName (undefined :: t s (K1 i (Possible a)) p)
     {-# INLINE parseRecord #-}
 
 --------------------------------------------------------------------------------

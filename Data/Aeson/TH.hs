@@ -78,7 +78,7 @@ module Data.Aeson.TH
 --------------------------------------------------------------------------------
 
 -- from aeson:
-import Data.Aeson ( toJSON, Object, (.=), (.:), (.:?)
+import Data.Aeson ( toJSON, Object, (.=), (.:), (.:?), (.:??)
                   , ToJSON, toEncoding, toJSON
                   , FromJSON, parseJSON
                   )
@@ -106,6 +106,7 @@ import Data.List           ( (++), foldl, foldl', intercalate, intersperse
                            )
 import Data.Maybe          ( Maybe(Nothing, Just), catMaybes )
 import Data.Monoid         ( (<>), mconcat )
+import Data.Possible       ( Possible(..))
 import Prelude             ( String, (-), Integer, error, foldr1, fromIntegral )
 import Text.Printf         ( printf )
 import Text.Show           ( show )
@@ -942,6 +943,9 @@ instance (FromJSON a) => LookupField a where
 instance (FromJSON a) => LookupField (Maybe a) where
     lookupField _ _ = (.:?)
 
+instance (FromJSON a) => LookupField (Possible a) where
+    lookupField _ _ = (.:??)
+
 unknownFieldFail :: String -> String -> String -> Parser fail
 unknownFieldFail tName rec key =
     fail $ printf "When parsing the record %s of type %s the key %s was not present."
@@ -1053,6 +1057,7 @@ valueConName (String _) = "String"
 valueConName (Number _) = "Number"
 valueConName (Bool   _) = "Boolean"
 valueConName Null       = "Null"
+valueConName Missing    = "Missing"
 
 applyCon :: Name -> [Name] -> Q [Pred]
 applyCon con typeNames = return (map apply typeNames)
