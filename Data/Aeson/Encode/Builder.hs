@@ -33,7 +33,7 @@ import Data.ByteString.Builder as B
 import Data.ByteString.Builder.Prim as BP
 import Data.ByteString.Builder.Scientific (scientificBuilder)
 import Data.Char (ord)
-import Data.Monoid ((<>))
+import Data.Monoid (mempty, (<>))
 import Data.Scientific (Scientific, base10Exponent, coefficient)
 import Data.Word (Word8)
 import qualified Data.HashMap.Strict as HMS
@@ -44,6 +44,7 @@ import qualified Data.Vector as V
 -- | Encode a JSON value to a ByteString 'B.Builder'. Use this function if you
 -- must prepend or append further bytes to the encoded JSON value.
 encodeToBuilder :: Value -> Builder
+encodeToBuilder Missing    = mempty
 encodeToBuilder Null       = null_
 encodeToBuilder (Bool b)   = bool b
 encodeToBuilder (Number n) = number n
@@ -71,8 +72,11 @@ array v
     withComma a z = B.char8 ',' <> encodeToBuilder a <> z
 
 -- Encode a JSON object.
+removeMissing :: [(a,Value)] -> [(a,Value)]
+removeMissing = filter (\(_,v) -> v /= Missing)
+
 object :: HMS.HashMap T.Text Value -> Builder
-object m = case HMS.toList m of
+object m = case removeMissing (HMS.toList m) of
     (x:xs) -> B.char8 '{' <> one x <> foldr withComma (B.char8 '}') xs
     _      -> B.char8 '{' <> B.char8 '}'
   where

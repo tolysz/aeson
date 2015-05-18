@@ -56,6 +56,7 @@ module Data.Aeson.Types
     , (.:)
     , (.:?)
     , (.!=)
+    , (.:??)
     , object
 
     -- * Generic and TH encoding configuration

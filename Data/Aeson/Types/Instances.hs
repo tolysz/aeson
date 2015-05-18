@@ -52,6 +52,7 @@ module Data.Aeson.Types.Instances
     , series
     , tuple
     , (>*<)
+    , (.:??)
     , typeMismatch
     ) where
 
@@ -72,7 +73,8 @@ import Data.Functor.Identity (Identity(..))
 import Data.Hashable (Hashable(..))
 import Data.Int (Int8, Int16, Int32, Int64)
 import Data.Maybe (fromMaybe)
-import Data.Monoid (Dual(..), First(..), Last(..))
+import Data.Possible (Possible(..))
+import Data.Monoid (Dual(..), First(..), Last(..), mappend)
 import Data.Ratio (Ratio, (%), numerator, denominator)
 import Data.Text (Text, pack, unpack)
 import Data.Time (UTCTime, ZonedTime(..), TimeZone(..))
@@ -128,9 +130,23 @@ instance (ToJSON a) => ToJSON (Maybe a) where
     toEncoding Nothing  = Encoding E.null_
 
 instance (FromJSON a) => FromJSON (Maybe a) where
-    parseJSON Null   = pure Nothing
-    parseJSON a      = Just <$> parseJSON a
+    parseJSON Null    = pure Nothing
+    parseJSON Missing = pure Nothing
+    parseJSON a       = Just <$> parseJSON a
     {-# INLINE parseJSON #-}
+
+instance (ToJSON a) => ToJSON (Possible a) where
+  toJSON MissingData  = Missing
+  toJSON HaveNull     = Null
+  toJSON (HaveData a) = toJSON a
+  {-# INLINE toJSON #-}
+
+instance FromJSON a => FromJSON (Possible a) where
+   parseJSON a = parseJSON a >>= \x -> case x of  -- LambdaCase
+         Null    -> pure HaveNull
+         Missing -> pure MissingData
+         v    -> HaveData <$> parseJSON v
+   {-# INLINE parseJSON #-}
 
 instance (ToJSON a, ToJSON b) => ToJSON (Either a b) where
     toJSON (Left a)  = object [left  .= a]
@@ -1490,6 +1506,16 @@ obj .:? key = case H.lookup key obj of
                Just v  -> parseJSON v <?> Key key
 {-# INLINE (.:?) #-}
 
+-- need a way to distinguish Null and Missing
+-- todo : fix triplecase
+(.:??) :: (FromJSON a) => Object -> Text -> Parser (Possible a)
+obj .:?? key = case H.lookup key obj of
+               Nothing -> pure MissingData
+               Just v  -> parseJSON v <?> Key key
+-- (.:??)  _ = pure HaveNull
+-- (.:??) v s = (v .:? s ) <|> (pure MissingData)
+{-# INLINE (.:??) #-}
+
 -- | Helper for use in combination with '.:?' to provide default
 -- values for optional JSON object fields.
 --
@@ -1523,6 +1549,7 @@ typeMismatch expected actual =
              Number _ -> "Number"
              Bool _   -> "Boolean"
              Null     -> "Null"
+             Missing  -> "Missing"
 
 realFloatToJSON :: RealFloat a => a -> Value
 realFloatToJSON d
