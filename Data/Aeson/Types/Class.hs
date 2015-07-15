@@ -1,8 +1,12 @@
-{-# LANGUAGE DefaultSignatures, FlexibleContexts #-}
+{-# LANGUAGE CPP, FlexibleContexts #-}
+
+#ifdef GENERICS
+{-# LANGUAGE DefaultSignatures #-}
+#endif
 
 -- |
 -- Module:      Data.Aeson.Types.Class
--- Copyright:   (c) 2011-2015 Bryan O'Sullivan
+-- Copyright:   (c) 2011-2013 Bryan O'Sullivan
 --              (c) 2011 MailRank, Inc.
 -- License:     Apache
 -- Maintainer:  Bryan O'Sullivan <bos@serpentine.com>
@@ -13,34 +17,29 @@
 
 module Data.Aeson.Types.Class
     (
-    -- * Core JSON classes
+    -- * Type classes
+    -- ** Core JSON classes
       FromJSON(..)
     , ToJSON(..)
-    -- * Generic JSON classes
+#ifdef GENERICS
+    -- ** Generic JSON classes
     , GFromJSON(..)
     , GToJSON(..)
     , genericToJSON
-    , genericToEncoding
     , genericParseJSON
-    -- * Object key-value pairs
-    , KeyValue(..)
+#endif
     ) where
 
 import Data.Aeson.Types.Internal
-import Data.Text (Text)
-import GHC.Generics (Generic, Rep, from, to)
-import qualified Data.Aeson.Encode.Builder as E
 
--- | Class of generic representation types ('Rep') that can be converted to
--- JSON.
+#ifdef GENERICS
+import GHC.Generics
+
+-- | Class of generic representation types ('Rep') that can be converted to JSON.
 class GToJSON f where
     -- | This method (applied to 'defaultOptions') is used as the
     -- default generic implementation of 'toJSON'.
     gToJSON :: Options -> f a -> Value
-
-    -- | This method (applied to 'defaultOptions') can be used as the
-    -- default generic implementation of 'toEncoding'.
-    gToEncoding :: Options -> f a -> Encoding
 
 -- | Class of generic representation types ('Rep') that can be converted from JSON.
 class GFromJSON f where
@@ -48,23 +47,18 @@ class GFromJSON f where
     -- default generic implementation of 'parseJSON'.
     gParseJSON :: Options -> Value -> Parser (f a)
 
--- | A configurable generic JSON creator. This function applied to
+-- | A configurable generic JSON encoder. This function applied to
 -- 'defaultOptions' is used as the default for 'toJSON' when the type
 -- is an instance of 'Generic'.
 genericToJSON :: (Generic a, GToJSON (Rep a)) => Options -> a -> Value
 genericToJSON opts = gToJSON opts . from
-
--- | A configurable generic JSON encoder. This function applied to
--- 'defaultOptions' is used as the default for 'toEncoding' when the type
--- is an instance of 'Generic'.
-genericToEncoding :: (Generic a, GToJSON (Rep a)) => Options -> a -> Encoding
-genericToEncoding opts = gToEncoding opts . from
 
 -- | A configurable generic JSON decoder. This function applied to
 -- 'defaultOptions' is used as the default for 'parseJSON' when the
 -- type is an instance of 'Generic'.
 genericParseJSON :: (Generic a, GFromJSON (Rep a)) => Options -> Value -> Parser a
 genericParseJSON opts = fmap to . gParseJSON opts
+#endif
 
 -- | A type that can be converted to JSON.
 --
@@ -84,18 +78,22 @@ genericParseJSON opts = fmap to . gParseJSON opts
 -- Instead of manually writing your 'ToJSON' instance, there are three options
 -- to do it automatically:
 --
--- * "Data.Aeson.TH" provides Template Haskell functions which will derive an
--- instance at compile time. The generated instance is optimized for your type
+-- * "Data.Aeson.TH" provides template-haskell functions which will derive an
+-- instance at compile-time. The generated instance is optimized for your type
 -- so will probably be more efficient than the following two options:
 --
--- * The compiler can provide default generic implementations for 'toJSON' and
--- 'toEncoding'.
+-- * "Data.Aeson.Generic" provides a generic @toJSON@ function that accepts any
+-- type which is an instance of 'Data'.
 --
--- To use the second, simply add a @deriving 'Generic'@ clause to your
--- datatype and declare a 'ToJSON' instance for your datatype without giving
--- definitions for 'toJSON' or 'toEncoding'.
+-- * If your compiler has support for the @DeriveGeneric@ and
+-- @DefaultSignatures@ language extensions (GHC 7.2 and newer),
+-- @toJSON@ will have a default generic implementation.
 --
--- For example, the previous example can be simplified to just:
+-- To use the latter option, simply add a @deriving 'Generic'@ clause to your
+-- datatype and declare a @ToJSON@ instance for your datatype without giving a
+-- definition for @toJSON@.
+--
+-- For example the previous example can be simplified to just:
 --
 -- @{-\# LANGUAGE DeriveGeneric \#-}
 --
@@ -112,18 +110,15 @@ genericParseJSON opts = fmap to . gParseJSON opts
 --
 -- @
 -- instance ToJSON Coord where
---     toJSON     = 'genericToJSON' 'defaultOptions'
---     toEncoding = 'genericToEncoding' 'defaultOptions'
+--     toJSON = 'genericToJSON' 'defaultOptions'
 -- @
 class ToJSON a where
-    toJSON     :: a -> Value
+    toJSON   :: a -> Value
 
+#ifdef GENERICS
     default toJSON :: (Generic a, GToJSON (Rep a)) => a -> Value
     toJSON = genericToJSON defaultOptions
-
-    toEncoding :: a -> Encoding
-    toEncoding = Encoding . E.encodeToBuilder . toJSON
-    {-# INLINE toEncoding #-}
+#endif
 
 -- | A type that can be converted from JSON, with the possibility of
 -- failure.
@@ -134,8 +129,7 @@ class ToJSON a where
 --
 -- An example type and instance:
 --
--- @
--- {-\# LANGUAGE OverloadedStrings #-}
+-- @{-\# LANGUAGE OverloadedStrings #-}
 --
 -- data Coord = Coord { x :: Double, y :: Double }
 --
@@ -151,24 +145,27 @@ class ToJSON a where
 -- Note the use of the @OverloadedStrings@ language extension which enables
 -- 'Text' values to be written as string literals.
 --
--- Instead of manually writing your 'FromJSON' instance, there are two options
+-- Instead of manually writing your 'FromJSON' instance, there are three options
 -- to do it automatically:
 --
--- * "Data.Aeson.TH" provides Template Haskell functions which will derive an
--- instance at compile time. The generated instance is optimized for your type
+-- * "Data.Aeson.TH" provides template-haskell functions which will derive an
+-- instance at compile-time. The generated instance is optimized for your type
 -- so will probably be more efficient than the following two options:
 --
--- * The compiler can provide a default generic implementation for
--- 'parseJSON'.
+-- * "Data.Aeson.Generic" provides a generic @fromJSON@ function that parses to
+-- any type which is an instance of 'Data'.
 --
--- To use the second, simply add a @deriving 'Generic'@ clause to your
--- datatype and declare a 'FromJSON' instance for your datatype without giving
--- a definition for 'parseJSON'.
+-- * If your compiler has support for the @DeriveGeneric@ and
+-- @DefaultSignatures@ language extensions, @parseJSON@ will have a default
+-- generic implementation.
 --
--- For example, the previous example can be simplified to just:
+-- To use this, simply add a @deriving 'Generic'@ clause to your datatype and
+-- declare a @FromJSON@ instance for your datatype without giving a definition
+-- for @parseJSON@.
 --
--- @
--- {-\# LANGUAGE DeriveGeneric \#-}
+-- For example the previous example can be simplified to just:
+--
+-- @{-\# LANGUAGE DeriveGeneric \#-}
 --
 -- import GHC.Generics
 --
@@ -189,10 +186,7 @@ class ToJSON a where
 class FromJSON a where
     parseJSON :: Value -> Parser a
 
+#ifdef GENERICS
     default parseJSON :: (Generic a, GFromJSON (Rep a)) => Value -> Parser a
     parseJSON = genericParseJSON defaultOptions
-
--- | A key-value pair for a JSON object.
-class KeyValue t where
-    (.=) :: ToJSON v => Text -> v -> t
-    infixr 8 .=
+#endif

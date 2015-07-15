@@ -4,7 +4,7 @@
 
 {-|
 Module:      Data.Aeson.TH
-Copyright:   (c) 2011-2015 Bryan O'Sullivan
+Copyright:   (c) 2011, 2012 Bryan O'Sullivan
              (c) 2011 MailRank, Inc.
 License:     Apache
 Stability:   experimental
@@ -69,7 +69,6 @@ module Data.Aeson.TH
     , deriveFromJSON
 
     , mkToJSON
-    , mkToEncoding
     , mkParseJSON
     ) where
 
@@ -78,8 +77,8 @@ module Data.Aeson.TH
 --------------------------------------------------------------------------------
 
 -- from aeson:
-import Data.Aeson ( toJSON, Object, (.=), (.:), (.:?), (.:??)
-                  , ToJSON, toEncoding, toJSON
+import Data.Aeson ( toJSON, Object, object, (.=), (.:), (.:?), (.:??)
+                  , ToJSON, toJSON
                   , FromJSON, parseJSON
                   )
 import Data.Aeson.Types ( Value(..), Parser
@@ -88,26 +87,21 @@ import Data.Aeson.Types ( Value(..), Parser
                         , defaultOptions
                         , defaultTaggedObject
                         )
-import Data.Aeson.Types.Internal (Encoding(..))
-import qualified Data.Aeson.Encode.Builder as E
-import qualified Data.Aeson.Encode.Functions as E
-import qualified Data.Aeson as A
 -- from base:
 import Control.Applicative ( pure, (<$>), (<*>) )
 import Control.Monad       ( return, mapM, liftM2, fail )
-import Data.Bool           ( Bool(False, True), otherwise, (&&) , not)
+import Data.Bool           ( Bool(False, True), otherwise, (&&) )
 import Data.Eq             ( (==) )
 import Data.Function       ( ($), (.) )
 import Data.Functor        ( fmap )
 import Data.Int            ( Int )
 import Data.Either         ( Either(Left, Right) )
-import Data.List           ( (++), foldl, foldl', intercalate, intersperse
+import Data.List           ( (++), foldl, foldl', intercalate
                            , length, map, zip, genericLength, all, partition
                            )
-import Data.Maybe          ( Maybe(Nothing, Just), catMaybes )
-import Data.Monoid         ( (<>), mconcat )
+import Data.Maybe          ( Maybe(Nothing, Just), catMaybes, maybe )
 import Data.Possible       ( Possible(..))
-import Prelude             ( String, (-), Integer, error, foldr1, fromIntegral )
+import Prelude             ( String, (-), Integer, fromIntegral, error, lookup)
 import Text.Printf         ( printf )
 import Text.Show           ( show )
 -- from unordered-containers:
@@ -172,12 +166,7 @@ deriveToJSON opts name =
                   (classType `appT` instanceType)
                   [ funD 'toJSON
                          [ clause []
-                                  (normalB $ consToValue opts cons)
-                                  []
-                         ]
-                  , funD 'toEncoding
-                         [ clause []
-                                  (normalB $ consToEncoding opts cons)
+                                  (normalB $ consToJSON opts cons)
                                   []
                          ]
                   ]
@@ -186,39 +175,31 @@ deriveToJSON opts name =
         typeNames = map tvbName tvbs
         instanceType = foldl' appT (conT name) $ map varT typeNames
 
--- | Generates a lambda expression which encodes the given data type as a
--- 'Value'.
+-- | Generates a lambda expression which encodes the given data type as JSON.
 mkToJSON :: Options -- ^ Encoding options.
          -> Name -- ^ Name of the type to encode.
          -> Q Exp
-mkToJSON opts name = withType name (\_ cons -> consToValue opts cons)
+mkToJSON opts name = withType name (\_ cons -> consToJSON opts cons)
 
--- | Generates a lambda expression which encodes the given data type
--- as a JSON string.
-mkToEncoding :: Options -- ^ Encoding options.
-             -> Name -- ^ Name of the type to encode.
-             -> Q Exp
-mkToEncoding opts name = withType name (\_ cons -> consToEncoding opts cons)
-
--- | Helper function used by both 'deriveToJSON' and 'mkToJSON'. Generates
--- code to generate a 'Value' of a number of constructors. All constructors
+-- | Helper function used by both 'deriveToJSON' and 'mkToJSON'. Generates code
+-- to generate the JSON encoding of a number of constructors. All constructors
 -- must be from the same type.
-consToValue :: Options
+consToJSON :: Options
            -- ^ Encoding options.
            -> [Con]
            -- ^ Constructors for which to generate JSON generating code.
            -> Q Exp
 
-consToValue _ [] = error $ "Data.Aeson.TH.consToValue: "
+consToJSON _ [] = error $ "Data.Aeson.TH.consToJSON: "
                           ++ "Not a single constructor given!"
 
 -- A single constructor is directly encoded. The constructor itself may be
 -- forgotten.
-consToValue opts [con] = do
+consToJSON opts [con] = do
     value <- newName "value"
-    lam1E (varP value) $ caseE (varE value) [argsToValue opts False con]
+    lam1E (varP value) $ caseE (varE value) [encodeArgs opts False con]
 
-consToValue opts cons = do
+consToJSON opts cons = do
     value <- newName "value"
     lam1E (varP value) $ caseE (varE value) matches
   where
@@ -228,7 +209,7 @@ consToValue opts cons = do
               | con <- cons
               , let conName = getConName con
               ]
-        | otherwise = [argsToValue opts True con | con <- cons]
+        | otherwise = [encodeArgs opts True con | con <- cons]
 
 conStr :: Options -> Name -> Q Exp
 conStr opts = appE [|String|] . conTxt opts
@@ -239,77 +220,41 @@ conTxt opts = appE [|T.pack|] . conStringE opts
 conStringE :: Options -> Name -> Q Exp
 conStringE opts = stringE . constructorTagModifier opts . nameBase
 
--- | Helper function used by both 'deriveToJSON' and 'mkToEncoding'. Generates
--- code to write out a value for a number of constructors. All constructors
--- must be from the same type.
-consToEncoding :: Options
-                  -- ^ Encoding options.
-               -> [Con]
-               -- ^ Constructors for which to generate JSON generating code.
-               -> Q Exp
-
-consToEncoding _ [] = error $ "Data.Aeson.TH.consToEncoding: "
-                      ++ "Not a single constructor given!"
-
--- A single constructor is directly encoded. The constructor itself may be
--- forgotten.
-consToEncoding opts [con] = do
-    value <- newName "value"
-    lam1E (varP value) $ caseE (varE value) [argsToEncoding opts False con]
-
--- Encode just the name of the constructor of a sum type iff all the
--- constructors are nullary.
-consToEncoding opts cons = do
-    value <- newName "value"
-    lam1E (varP value) $ caseE (varE value) matches
-  where
-    matches
-        | allNullaryToStringTag opts && all isNullary cons =
-              [ match (conP conName [])
-                (normalB $ [|Encoding|] `appE` encStr opts conName) []
-              | con <- cons
-              , let conName = getConName con
-              ]
-        | otherwise = [argsToEncoding opts True con | con <- cons]
-
-encStr :: Options -> Name -> Q Exp
-encStr opts = appE [|E.text|] . conTxt opts
-
 -- | If constructor is nullary.
 isNullary :: Con -> Bool
 isNullary (NormalC _ []) = True
 isNullary _ = False
 
-sumToValue :: Options -> Bool -> Name -> Q Exp -> Q Exp
-sumToValue opts multiCons conName exp
+encodeSum :: Options -> Bool -> Name -> Q Exp -> Q Exp
+encodeSum opts multiCons conName exp
     | multiCons =
         case sumEncoding opts of
           TwoElemArray ->
               [|Array|] `appE` ([|V.fromList|] `appE` listE [conStr opts conName, exp])
           TaggedObject{tagFieldName, contentsFieldName} ->
-              [|A.object|] `appE` listE
+              [|object|] `appE` listE
                 [ infixApp [|T.pack tagFieldName|]     [|(.=)|] (conStr opts conName)
                 , infixApp [|T.pack contentsFieldName|] [|(.=)|] exp
                 ]
           ObjectWithSingleField ->
-              [|A.object|] `appE` listE
+              [|object|] `appE` listE
                 [ infixApp (conTxt opts conName) [|(.=)|] exp
                 ]
 
     | otherwise = exp
 
 -- | Generates code to generate the JSON encoding of a single constructor.
-argsToValue :: Options -> Bool -> Con -> Q Match
+encodeArgs :: Options -> Bool -> Con -> Q Match
 -- Nullary constructors. Generates code that explicitly matches against the
 -- constructor even though it doesn't contain data. This is useful to prevent
 -- type errors.
-argsToValue  opts multiCons (NormalC conName []) =
+encodeArgs  opts multiCons (NormalC conName []) =
     match (conP conName [])
-          (normalB (sumToValue opts multiCons conName [e|toJSON ([] :: [()])|]))
+          (normalB (encodeSum opts multiCons conName [e|toJSON ([] :: [()])|]))
           []
 
 -- Polyadic constructors with special case for unary constructors.
-argsToValue opts multiCons (NormalC conName ts) = do
+encodeArgs opts multiCons (NormalC conName ts) = do
     let len = length ts
     args <- mapM newName ["arg" ++ show n | n <- [1..len]]
     js <- case [[|toJSON|] `appE` varE arg | arg <- args] of
@@ -333,15 +278,13 @@ argsToValue opts multiCons (NormalC conName ts) = do
                          (varE 'V.create `appE`
                            doE (newMV:stmts++[ret]))
     match (conP conName $ map varP args)
-          (normalB $ sumToValue opts multiCons conName js)
+          (normalB $ encodeSum opts multiCons conName js)
           []
 
 -- Records.
-argsToValue opts multiCons (RecC conName ts) = case (unwrapUnaryRecords opts, not multiCons, ts) of
-  (True,True,[(_,st,ty)]) -> argsToValue opts multiCons (NormalC conName [(st,ty)])
-  _ -> do
+encodeArgs opts multiCons (RecC conName ts) = do
     args <- mapM newName ["arg" ++ show n | (_, n) <- zip ts [1 :: Integer ..]]
-    let exp = [|A.object|] `appE` pairs
+    let exp = [|object|] `appE` pairs
 
         pairs | omitNothingFields opts = infixApp maybeFields
                                                   [|(++)|]
@@ -356,6 +299,9 @@ argsToValue opts multiCons (RecC conName ts) = case (unwrapUnaryRecords opts, no
 
         (maybes, rest) = partition isMaybe argCons
 
+        isMaybe (_, (_, _, AppT (ConT t) _)) = t == ''Maybe
+        isMaybe _ = False
+
         maybeToPair (arg, (field, _, _)) =
             infixApp (infixE (Just $ toFieldName field)
                              [|(.=)|]
@@ -368,6 +314,7 @@ argsToValue opts multiCons (RecC conName ts) = case (unwrapUnaryRecords opts, no
                      [|(.=)|]
                      (varE arg)
 
+
         toFieldName field = [|T.pack|] `appE` fieldLabelExp opts field
 
     match (conP conName $ map varP args)
@@ -376,7 +323,7 @@ argsToValue opts multiCons (RecC conName ts) = case (unwrapUnaryRecords opts, no
             then case sumEncoding opts of
                    TwoElemArray -> [|toJSON|] `appE` tupE [conStr opts conName, exp]
                    TaggedObject{tagFieldName} ->
-                       [|A.object|] `appE`
+                       [|object|] `appE`
                          -- TODO: Maybe throw an error in case
                          -- tagFieldName overwrites a field in pairs.
                          infixApp (infixApp [|T.pack tagFieldName|]
@@ -385,153 +332,26 @@ argsToValue opts multiCons (RecC conName ts) = case (unwrapUnaryRecords opts, no
                                   [|(:)|]
                                   pairs
                    ObjectWithSingleField ->
-                       [|A.object|] `appE` listE
+                       [|object|] `appE` listE
                          [ infixApp (conTxt opts conName) [|(.=)|] exp ]
             else exp
           ) []
 
 -- Infix constructors.
-argsToValue opts multiCons (InfixC _ conName _) = do
+encodeArgs opts multiCons (InfixC _ conName _) = do
     al <- newName "argL"
     ar <- newName "argR"
     match (infixP (varP al) conName (varP ar))
           ( normalB
-          $ sumToValue opts multiCons conName
+          $ encodeSum opts multiCons conName
           $ [|toJSON|] `appE` listE [ [|toJSON|] `appE` varE a
                                     | a <- [al,ar]
                                     ]
           )
           []
 -- Existentially quantified constructors.
-argsToValue opts multiCons (ForallC _ _ con) =
-    argsToValue opts multiCons con
-
-isMaybe :: (a, (b, c, Type)) -> Bool
-isMaybe (_, (_, _, AppT (ConT t) _)) = t == ''Maybe
-isMaybe _                            = False
-
-(<^>) :: ExpQ -> ExpQ -> ExpQ
-(<^>) a b = infixApp a [|(<>)|] b
-infixr 6 <^>
-
-(<:>) :: ExpQ -> ExpQ -> ExpQ
-(<:>) a b = a <^> [|E.char7 ':'|] <^> b
-infixr 5 <:>
-
-(<%>) :: ExpQ -> ExpQ -> ExpQ
-(<%>) a b = a <^> [|E.char7 ','|] <^> b
-infixr 4 <%>
-
-array :: ExpQ -> ExpQ
-array exp = [|Encoding|] `appE` ([|E.char7 '['|] <^> exp <^> [|E.char7 ']'|])
-
-object :: ExpQ -> ExpQ
-object exp = [|Encoding|] `appE` ([|E.char7 '{'|] <^> exp <^> [|E.char7 '}'|])
-
-sumToEncoding :: Options -> Bool -> Name -> Q Exp -> Q Exp
-sumToEncoding opts multiCons conName exp
-    | multiCons =
-        let fexp = [|fromEncoding|] `appE` exp in
-        case sumEncoding opts of
-          TwoElemArray ->
-            array (encStr opts conName <%> fexp)
-          TaggedObject{tagFieldName, contentsFieldName} ->
-            object $
-            ([|E.builder tagFieldName|] <:> encStr opts conName) <%>
-            ([|E.builder contentsFieldName|] <:> fexp)
-          ObjectWithSingleField ->
-            object (encStr opts conName <:> fexp)
-
-    | otherwise = exp
-
--- | Generates code to generate the JSON encoding of a single constructor.
-argsToEncoding :: Options -> Bool -> Con -> Q Match
--- Nullary constructors. Generates code that explicitly matches against the
--- constructor even though it doesn't contain data. This is useful to prevent
--- type errors.
-argsToEncoding  opts multiCons (NormalC conName []) =
-    match (conP conName [])
-          (normalB (sumToEncoding opts multiCons conName [e|toEncoding ([] :: [()])|]))
-          []
-
--- Polyadic constructors with special case for unary constructors.
-argsToEncoding opts multiCons (NormalC conName ts) = do
-    let len = length ts
-    args <- mapM newName ["arg" ++ show n | n <- [1..len]]
-    js <- case args of
-            -- Single argument is directly converted.
-            [e] -> return ([|toEncoding|] `appE` varE e)
-            -- Multiple arguments are converted to a JSON array.
-            es  ->
-              return (array (foldr1 (<%>) [[|E.builder|] `appE` varE x | x <- es]))
-    match (conP conName $ map varP args)
-          (normalB $ sumToEncoding opts multiCons conName js)
-          []
-
--- Records.
-argsToEncoding opts multiCons (RecC conName ts) = case (unwrapUnaryRecords opts, not multiCons, ts) of
-  (True,True,[(_,st,ty)]) -> argsToEncoding opts multiCons (NormalC conName [(st,ty)])
-  _ -> do
-    args <- mapM newName ["arg" ++ show n | (_, n) <- zip ts [1 :: Integer ..]]
-
-    let exp = object objBody
-
-        objBody = [|mconcat|] `appE`
-                  ([|intersperse (E.char7 ',')|] `appE` pairs)
-        pairs | omitNothingFields opts = infixApp maybeFields
-                                                  [|(<>)|]
-                                                  restFields
-              | otherwise = listE (map toPair argCons)
-
-        argCons = zip args ts
-
-        maybeFields = [|catMaybes|] `appE` listE (map maybeToPair maybes)
-
-        restFields = listE (map toPair rest)
-
-        (maybes, rest) = partition isMaybe argCons
-
-        maybeToPair (arg, (field, _, _)) =
-            infixApp (infixE (Just $ toFieldName field)
-                             [|(.=)|]
-                             Nothing)
-                     [|(<$>)|]
-                     (varE arg)
-
-        toPair (arg, (field, _, _)) =
-          toFieldName field <:> [|E.builder|] `appE` varE arg
-
-        toFieldName field = [|E.builder|] `appE` fieldLabelExp opts field
-
-    match (conP conName $ map varP args)
-          ( normalB
-          $ if multiCons
-            then case sumEncoding opts of
-                   TwoElemArray -> array $
-                     encStr opts conName <%> [|fromEncoding|] `appE` exp
-                   TaggedObject{tagFieldName} -> object $
-                     ([|E.builder tagFieldName|] <:> encStr opts conName) <%>
-                     objBody
-                   ObjectWithSingleField -> object $
-                     encStr opts conName <:> [|fromEncoding|] `appE` exp
-            else exp
-          ) []
-
--- Infix constructors.
-argsToEncoding opts multiCons (InfixC _ conName _) = do
-    al <- newName "argL"
-    ar <- newName "argR"
-    match (infixP (varP al) conName (varP ar))
-          ( normalB
-          $ sumToEncoding opts multiCons conName
-          $ [|toEncoding|] `appE` listE [ [|toJSON|] `appE` varE a
-                                        | a <- [al,ar]
-                                        ]
-          )
-          []
--- Existentially quantified constructors.
-argsToEncoding opts multiCons (ForallC _ _ con) =
-    argsToEncoding opts multiCons con
+encodeArgs opts multiCons (ForallC _ _ con) =
+    encodeArgs opts multiCons con
 
 
 --------------------------------------------------------------------------------
@@ -802,6 +622,7 @@ parseRecord opts tName conName ts obj =
       x:xs = [ [|lookupField|]
                `appE` (litE $ stringL $ show tName)
                `appE` (litE $ stringL $ constructorTagModifier opts $ nameBase conName)
+               `appE` (maybe (return $ ConE 'Nothing ) (fmap (AppE (ConE 'Just))) (lookup (fieldLabelModifier opts . nameBase $ field ) ( fieldsWithDefaults opts )))
                `appE` (varE obj)
                `appE` ( [|T.pack|] `appE` fieldLabelExp opts field
                       )
@@ -817,6 +638,7 @@ getValField obj valFieldName matches = do
                                        (litE $ stringL valFieldName))
       , noBindS $ caseE (varE val) matches
       ]
+
 
 -- | Generates code to parse the JSON encoding of a single constructor.
 parseArgs :: Name -- ^ Name of the type to which the constructor belongs.
@@ -846,9 +668,7 @@ parseArgs tName _ (NormalC conName ts) (Right valName) =
 -- Records.
 parseArgs tName opts (RecC conName ts) (Left (_, obj)) =
     parseRecord opts tName conName ts obj
-parseArgs tName opts (RecC conName ts) (Right valName) = case (unwrapUnaryRecords opts,ts) of
-  (True,[(_,st,ty)])-> parseArgs tName opts (NormalC conName [(st,ty)]) (Right valName)
-  _ -> do
+parseArgs tName opts (RecC conName ts) (Right valName) = do
   obj <- newName "recObj"
   caseE (varE valName)
     [ match (conP 'Object [varP obj]) (normalB $ parseRecord opts tName conName ts obj) []
@@ -930,19 +750,19 @@ parseTypeMismatch tName conName expected actual =
           ]
 
 class (FromJSON a) => LookupField a where
-    lookupField :: String -> String -> Object -> T.Text -> Parser a
+    lookupField :: String -> String -> (Maybe a) -> Object -> T.Text -> Parser a
 
 instance (FromJSON a) => LookupField a where
-    lookupField tName rec obj key =
+    lookupField tName rec defVal obj key =
         case H.lookup key obj of
-          Nothing -> unknownFieldFail tName rec (T.unpack key)
+          Nothing -> maybe (unknownFieldFail tName rec (T.unpack key)) return defVal
           Just v  -> parseJSON v
 
 instance (FromJSON a) => LookupField (Maybe a) where
-    lookupField _ _ = (.:?)
+    lookupField _ _ _ = (.:?)
 
 instance (FromJSON a) => LookupField (Possible a) where
-    lookupField _ _ = (.:??)
+    lookupField _ _ _ = (.:??)
 
 unknownFieldFail :: String -> String -> String -> Parser fail
 unknownFieldFail tName rec key =
@@ -989,7 +809,7 @@ conNotFoundFailTaggedObject t cs o =
                   t (intercalate ", " cs) o
 
 parseTypeMismatch' :: String -> String -> String -> String -> Parser fail
-parseTypeMismatch' conName tName expected actual =
+parseTypeMismatch' tName conName expected actual =
     fail $ printf "When parsing the constructor %s of type %s expected %s but got %s."
                   conName tName expected actual
 

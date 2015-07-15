@@ -1,6 +1,8 @@
+{-# LANGUAGE CPP #-}
+
 -- |
 -- Module:      Data.Aeson
--- Copyright:   (c) 2011-2015 Bryan O'Sullivan
+-- Copyright:   (c) 2011, 2012 Bryan O'Sullivan
 --              (c) 2011 MailRank, Inc.
 -- License:     Apache
 -- Maintainer:  Bryan O'Sullivan <bos@serpentine.com>
@@ -16,9 +18,6 @@ module Data.Aeson
     -- * How to use this library
     -- $use
 
-    -- ** Writing instances by hand
-    -- $manual
-
     -- ** Working with the AST
     -- $ast
 
@@ -27,6 +26,12 @@ module Data.Aeson
 
     -- ** Decoding a mixed-type object
     -- $mixed
+
+    -- ** Automatically decoding data types
+    -- $typeable
+
+    -- ** Pitfalls
+    -- $pitfalls
 
     -- * Encoding and decoding
     -- $encoding_and_decoding
@@ -42,8 +47,6 @@ module Data.Aeson
     , eitherDecodeStrict'
     -- * Core JSON types
     , Value(..)
-    , Encoding
-    , fromEncoding
     , Array
     , Object
     -- * Convenience types
@@ -53,14 +56,13 @@ module Data.Aeson
     , Result(..)
     , fromJSON
     , ToJSON(..)
-    , KeyValue(..)
+#ifdef GENERICS
     -- ** Generic JSON classes
     , GFromJSON(..)
     , GToJSON(..)
     , genericToJSON
-    , genericToEncoding
     , genericParseJSON
-
+#endif
     -- * Inspecting @'Value's@
     , withObject
     , withText
@@ -69,9 +71,7 @@ module Data.Aeson
     , withScientific
     , withBool
     -- * Constructors and accessors
-    , Series
-    , series
-    , foldable
+    , (.=)
     , (.:)
     , (.:?)
     , (.!=)
@@ -87,8 +87,6 @@ import Data.Aeson.Parser.Internal (decodeWith, decodeStrictWith,
                                    eitherDecodeWith, eitherDecodeStrictWith,
                                    jsonEOF, json, jsonEOF', json')
 import Data.Aeson.Types
-import Data.Aeson.Types.Internal (JSONPath, formatError)
-import Data.Aeson.Types.Instances (ifromJSON)
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Lazy as L
 
@@ -97,7 +95,10 @@ import qualified Data.ByteString.Lazy as L
 -- returned.
 --
 -- The input must consist solely of a JSON document, with no trailing
--- data except for whitespace.
+-- data except for whitespace. This restriction is necessary to ensure
+-- that if data is being lazily read from a file handle, the file
+-- handle will be closed in a timely fashion once the document has
+-- been parsed.
 --
 -- This function parses immediately, but defers conversion.  See
 -- 'json' for details.
@@ -147,84 +148,43 @@ decodeStrict' :: (FromJSON a) => B.ByteString -> Maybe a
 decodeStrict' = decodeStrictWith jsonEOF' fromJSON
 {-# INLINE decodeStrict' #-}
 
-eitherFormatError :: Either (JSONPath, String) a -> Either String a
-eitherFormatError = either (Left . uncurry formatError) Right
-{-# INLINE eitherFormatError #-}
-
 -- | Like 'decode' but returns an error message when decoding fails.
 eitherDecode :: (FromJSON a) => L.ByteString -> Either String a
-eitherDecode = eitherFormatError . eitherDecodeWith jsonEOF ifromJSON
+eitherDecode = eitherDecodeWith jsonEOF fromJSON
 {-# INLINE eitherDecode #-}
 
 -- | Like 'decodeStrict' but returns an error message when decoding fails.
 eitherDecodeStrict :: (FromJSON a) => B.ByteString -> Either String a
-eitherDecodeStrict =
-  eitherFormatError . eitherDecodeStrictWith jsonEOF ifromJSON
+eitherDecodeStrict = eitherDecodeStrictWith jsonEOF fromJSON
 {-# INLINE eitherDecodeStrict #-}
 
 -- | Like 'decode'' but returns an error message when decoding fails.
 eitherDecode' :: (FromJSON a) => L.ByteString -> Either String a
-eitherDecode' = eitherFormatError . eitherDecodeWith jsonEOF' ifromJSON
+eitherDecode' = eitherDecodeWith jsonEOF' fromJSON
 {-# INLINE eitherDecode' #-}
 
 -- | Like 'decodeStrict'' but returns an error message when decoding fails.
 eitherDecodeStrict' :: (FromJSON a) => B.ByteString -> Either String a
-eitherDecodeStrict' =
-  eitherFormatError . eitherDecodeStrictWith jsonEOF' ifromJSON
+eitherDecodeStrict' = eitherDecodeStrictWith jsonEOF' fromJSON
 {-# INLINE eitherDecodeStrict' #-}
 
 -- $use
 --
 -- This section contains basic information on the different ways to
--- work with data using this library. These range from simple but
+-- decode data using this library. These range from simple but
 -- inflexible, to complex but flexible.
 --
 -- The most common way to use the library is to define a data type,
 -- corresponding to some JSON data you want to work with, and then
 -- write either a 'FromJSON' instance, a to 'ToJSON' instance, or both
--- for that type.
---
--- For example, given this JSON data:
+-- for that type. For example, given this JSON data:
 --
 -- > { "name": "Joe", "age": 12 }
 --
 -- we create a matching data type:
 --
--- > {-# LANGUAGE DeriveGeneric #-}
--- >
--- > import GHC.Generics
--- >
--- > data Person = Person {
--- >       name :: Text
--- >     , age  :: Int
--- >     } deriving (Generic, Show)
---
--- The @LANGUAGE@ pragma and 'Generic' instance let us write empty
--- 'FromJSON' and 'ToJSON' instances for which the compiler will
--- generate sensible default implementations.
---
--- > instance ToJSON Person
--- > instance FromJSON Person
---
--- We can now encode a value like so:
---
--- > >>> encode (Person {name = "Joe", age = 12})
--- > "{\"name\":\"Joe\",\"age\":12}"
-
--- $manual
---
--- When necessary, we can write 'ToJSON' and 'FromJSON' instances by
--- hand.  This is valuable when the JSON-on-the-wire and Haskell data
--- are different or otherwise need some more carefully managed
--- translation.  Let's revisit our JSON data:
---
--- > { "name": "Joe", "age": 12 }
---
--- We once again create a matching data type, without bothering to add
--- a 'Generic' instance this time:
---
--- > data Person = Person {
--- >       name :: Text
+-- > data Person = Person
+-- >     { name :: Text
 -- >     , age  :: Int
 -- >     } deriving Show
 --
@@ -237,7 +197,7 @@ eitherDecodeStrict' =
 -- >                            v .: "name" <*>
 -- >                            v .: "age"
 -- >     -- A non-Object value is of the wrong type, so fail.
--- >     parseJSON _          = empty
+-- >     parseJSON _          = mzero
 --
 -- We can now parse the JSON data like so:
 --
@@ -247,13 +207,7 @@ eitherDecodeStrict' =
 -- To encode data, we need to define a 'ToJSON' instance:
 --
 -- > instance ToJSON Person where
--- >     -- this generates a Value
--- >     toJSON (Person name age) =
--- >         object ["name" .= name, "age" .= age]
--- >
--- >     -- this encodes directly to a ByteString Builder
--- >     toEncoding (Person name age) =
--- >         series $ "name" .= name <> "age" .= age
+-- >     toJSON (Person name age) = object ["name" .= name, "age" .= age]
 --
 -- We can now encode a value like so:
 --
@@ -279,7 +233,7 @@ eitherDecodeStrict' =
 -- expectations.)
 --
 -- See the documentation of 'FromJSON' and 'ToJSON' for some examples
--- of how you can automatically derive instances in many common
+-- of how you can automatically derive instances in some
 -- circumstances.
 
 -- $ast
@@ -302,7 +256,8 @@ eitherDecodeStrict' =
 
 -- $haskell
 --
--- We can decode to any instance of 'FromJSON':
+-- Any instance of 'FromJSON' can be specified (but see the
+-- \"Pitfalls\" section here&#8212;"Data.Aeson#pitfalls"):
 --
 -- > λ> decode "[1,2,3]" :: Maybe [Int]
 -- > Just [1,2,3]
@@ -311,7 +266,7 @@ eitherDecodeStrict' =
 -- can use them directly. For example, use the 'Data.Map.Map' type to
 -- get a map of 'Int's.
 --
--- > λ> import Data.Map
+-- > λ> :m + Data.Map
 -- > λ> decode "{\"foo\":1,\"bar\":2}" :: Maybe (Map String Int)
 -- > Just (fromList [("bar",2),("foo",1)])
 
@@ -346,24 +301,86 @@ eitherDecodeStrict' =
 -- upside is that you have complete control over the way the JSON is
 -- parsed.
 
+-- $typeable
+--
+-- If you don't want fine control and would prefer the JSON be parsed
+-- to your own data types automatically according to some reasonably
+-- sensible isomorphic implementation, you can use the generic parser
+-- based on 'Data.Typeable.Typeable' and 'Data.Data.Data'. Switch to
+-- the 'Data.Aeson.Generic' module, and you can do the following:
+--
+-- > λ> decode "[1]" :: Maybe [Int]
+-- > Just [1]
+-- > λ> :m + Data.Typeable Data.Data
+-- > λ> :set -XDeriveDataTypeable
+-- > λ> data Person = Person { personName :: String, personAge :: Int } deriving (Data,Typeable,Show)
+-- > λ> encode Person { personName = "Chris", personAge = 123 }
+-- > "{\"personAge\":123,\"personName\":\"Chris\"}"
+-- > λ> decode "{\"personAge\":123,\"personName\":\"Chris\"}" :: Maybe Person
+-- > Just (Person {
+-- > personName = "Chris", personAge = 123
+-- > })
+--
+-- Be aware that the encoding may not always be what you'd naively
+-- expect:
+--
+-- > λ> data Foo = Foo Int Int deriving (Data,Typeable,Show)
+-- > λ> encode (Foo 1 2)
+-- > "[1,2]"
+--
+-- With this approach, it's best to treat the
+-- 'Data.Aeson.Generic.decode' and 'Data.Aeson.Generic.encode'
+-- functions as an isomorphism, and not to rely upon (or care about)
+-- the specific intermediate representation.
+
+-- $pitfalls
+-- #pitfalls#
+--
+-- Note that the JSON standard requires that the top-level value be
+-- either an array or an object. If you try to use 'decode' with a
+-- result type that is /not/ represented in JSON as an array or
+-- object, your code will typecheck, but it will always \"fail\" at
+-- runtime:
+--
+-- > >>> decode "1" :: Maybe Int
+-- > Nothing
+-- > >>> decode "1" :: Maybe String
+-- > Nothing
+--
+-- So stick to objects (e.g. maps in Haskell) or arrays (lists or
+-- vectors in Haskell):
+--
+-- > >>> decode "[1,2,3]" :: Maybe [Int]
+-- > Just [1,2,3]
+--
+-- When encoding to JSON you can encode anything that's an instance of
+-- 'ToJSON', and this may include simple types. So beware that this
+-- aspect of the API is not isomorphic. You can round-trip arrays and
+-- maps, but not simple values:
+--
+-- > >>> encode [1,2,3]
+-- > "[1,2,3]"
+-- > >>> decode (encode [1]) :: Maybe [Int]
+-- > Just [1]
+-- > >>> encode 1
+-- > "1"
+-- > >>> decode (encode (1 :: Int)) :: Maybe Int
+-- > Nothing
+--
+-- Alternatively, see 'Data.Aeson.Parser.value' to parse non-top-level
+-- JSON values.
+
 -- $encoding_and_decoding
 --
--- Decoding is a two-step process.
+-- Encoding and decoding are each two-step processes.
+--
+-- * To encode a value, it is first converted to an abstract syntax
+--   tree (AST), using 'ToJSON'. This generic representation is then
+--   encoded as bytes.
 --
 -- * When decoding a value, the process is reversed: the bytes are
---   converted to a 'Value', then the 'FromJSON' class is used to
---   convert to the desired type.
---
--- There are two ways to encode a value.
---
--- * Convert to a 'Value' using 'toJSON', then possibly further
---   encode.  This was the only method available in aeson 0.9 and
---   earlier.
---
--- * Directly encode (to what will become a 'L.ByteString') using
---   'toEncoding'.  This is much more efficient (about 3x faster, and
---   less memory intensive besides), but is only available in aeson
---   0.10 and newer.
+--   converted to an AST, then the 'FromJSON' class is used to convert
+--   to the desired type.
 --
 -- For convenience, the 'encode' and 'decode' functions combine both
 -- steps.

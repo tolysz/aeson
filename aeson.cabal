@@ -1,9 +1,9 @@
 name:            aeson
-version:         0.10.0.0
+version:         0.8.0.2
 license:         BSD3
 license-file:    LICENSE
 category:        Text, Web, JSON
-copyright:       (c) 2011-2015 Bryan O'Sullivan
+copyright:       (c) 2011-2014 Bryan O'Sullivan
                  (c) 2011 MailRank, Inc.
 author:          Bryan O'Sullivan <bos@serpentine.com>
 maintainer:      Bryan O'Sullivan <bos@serpentine.com>
@@ -65,12 +65,9 @@ extra-source-files:
     benchmarks/*.hs
     benchmarks/*.py
     benchmarks/Makefile
-    benchmarks/Typed/*.hs
     benchmarks/json-data/*.json
     changelog.md
-    examples/*.cabal
     examples/*.hs
-    examples/Twitter/*.hs
 
 flag developer
   description: operate in developer mode
@@ -87,14 +84,13 @@ library
   exposed-modules:
     Data.Aeson
     Data.Aeson.Encode
-    Data.Aeson.Internal
+    Data.Aeson.Generic
     Data.Aeson.Parser
     Data.Aeson.Types
     Data.Aeson.TH
 
   other-modules:
-    Data.Aeson.Encode.Builder
-    Data.Aeson.Encode.Functions
+    Data.Aeson.Encode.ByteString
     Data.Aeson.Functions
     Data.Aeson.Parser.Internal
     Data.Aeson.Types.Class
@@ -103,8 +99,8 @@ library
     Data.Aeson.Types.Internal
 
   build-depends:
-    attoparsec >= 0.13.0.0,
-    base >= 4.5 && < 5,
+    attoparsec >= 0.11.3.4,
+    base == 4.*,
     bytestring >= 0.10.4.0,
     containers,
     deepseq,
@@ -116,8 +112,7 @@ library
     syb,
     template-haskell >= 2.4,
     text >= 1.1.1.0,
-    transformers,
-    unordered-containers >= 0.2.5.0,
+    unordered-containers >= 0.2.3.0,
     vector >= 0.7.1,
     possible >= 0.1.0.1
 
@@ -131,6 +126,7 @@ library
     ghc-prof-options: -auto-all
 
   ghc-options: -O2 -Wall
+  cpp-options: -DGENERICS
 
 test-suite tests
   type:           exitcode-stdio-1.0
@@ -141,14 +137,15 @@ test-suite tests
     Functions
     Instances
     Options
-    Properties.ZonedTime
+    Properties.Deprecated
     Types
 
   ghc-options: -Wall -threaded -rtsopts
+  cpp-options: -DGHC_GENERICS
 
   build-depends:
     HUnit,
-    QuickCheck >= 2.7,
+    QuickCheck,
     aeson,
     attoparsec,
     base,
@@ -163,11 +160,6 @@ test-suite tests
     time,
     unordered-containers,
     vector
-
-  if flag(old-locale)
-    build-depends: time < 1.5, old-locale
-  else
-    build-depends: time >= 1.5
 
 source-repository head
   type:     git

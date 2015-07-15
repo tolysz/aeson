@@ -1,5 +1,8 @@
-{-# Language OverloadedStrings, RecordWildCards, StandaloneDeriving #-}
+{-# Language CPP, OverloadedStrings, RecordWildCards, StandaloneDeriving #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
+#if __GLASGOW_HASKELL__ < 702
+{-# OPTIONS_GHC -fno-warn-missing-methods #-}
+#endif
 
 module Instances where
 
@@ -142,9 +145,3 @@ instance Arbitrary a => Arbitrary (SomeType a) where
                       , Product <$> arbitrary <*> arbitrary <*> arbitrary
                       , Record  <$> arbitrary <*> arbitrary <*> arbitrary
                       ]
-
-instance ApproxEq Char where
-    (=~) = (==)
-
-instance (ApproxEq a) => ApproxEq [a] where
-    a =~ b = length a == length b && all (uncurry (=~)) (zip a b)

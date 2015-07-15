@@ -15,11 +15,6 @@ opts2ElemArray = optsDefault
                  , sumEncoding     = TwoElemArray
                  }
 
-optsUnwrapUnaryRecords :: Options
-optsUnwrapUnaryRecords = optsDefault
-                         { unwrapUnaryRecords = True
-                         }
-
 optsTaggedObject :: Options
 optsTaggedObject = optsDefault
                    { allNullaryToStringTag = False }
