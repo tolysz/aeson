@@ -9,7 +9,7 @@ module Data.Aeson.Parser.Unescape (
 import           Control.Exception          (evaluate, throw, try)
 import           Control.Monad              (when)
 import           Data.ByteString            as B
-import           Data.Bits                  (shiftL, (.|.))
+import           Data.Bits                  (shiftL, shiftR, (.&.), (.|.))
 import           Data.Text                  (Text)
 import qualified Data.Text.Array            as A
 import           Data.Text.Encoding.Error   (UnicodeException (..))
@@ -25,21 +25,74 @@ data Utf =
   | UtfTail2
   | UtfU32ed
   | Utf843f0
-  | Tail3
+  | UtfTail3
   | Utf843f4
   deriving (Eq)
 
 data State = 
     StateNone
+  | StateUtf !Utf !Word32
   | StateBackslash
-  | StateUtf !Word32 !Utf
   | StateU0
   | StateU1 !Word16
   | StateU2 !Word16
   | StateU3 !Word16
+  | StateS0
+  | StateS1
+  | StateSU0
+  | StateSU1 !Word16
+  | StateSU2 !Word16
+  | StateSU3 !Word16
   deriving (Eq)
 
--- decode word  = ...
+setByte1 point word = point .|. fromIntegral (word .&. 0x3f)
+setByte2 point word = point .|. ((fromIntegral $ word .&. 0x3f) `shiftL` 6)
+setByte2Top point word = point .|. ((fromIntegral $ word .&. 0x1f) `shiftL` 6)
+setByte3 point word = point .|. ((fromIntegral $ word .&. 0x3f) `shiftL` 12)
+setByte3Top point word = point .|. ((fromIntegral $ word .&. 0xf) `shiftL` 12)
+setByte4 point word = point .|. ((fromIntegral $ word .&. 0x7) `shiftL` 18)
+
+decode :: Utf -> Word32 -> Word8 -> (Utf, Word32)
+decode UtfGround point word = case word of
+  w | 0x00 <= w && w <= 0x7f -> (UtfGround, fromIntegral word)
+  w | 0xc2 <= w && w <= 0xdf -> (UtfTail1, setByte2Top point word)
+  0xe0                       -> (UtfU32e0, setByte3Top point word)
+  w | 0xe1 <= w && w <= 0xec -> (UtfTail2, setByte3Top point word)
+  0xed                       -> (UtfU32ed, setByte3Top point word)
+  w | 0xee <= w && w <= 0xef -> (UtfTail2, setByte3Top point word)
+  0xf0                       -> (Utf843f0, setByte4 point word)
+  w | 0xf1 <= w && w <= 0xf3 -> (UtfTail3, setByte4 point word)
+  0xf4                       -> (Utf843f4, setByte4 point word)
+  _                          -> throwDecodeError
+
+decode UtfU32e0 point word = case word of
+  w | 0xa0 <= w && w <= 0xbf -> (UtfTail1, setByte2 point word)
+  _                          -> throwDecodeError
+
+decode UtfU32ed point word = case word of 
+  w | 0x80 <= w && w <= 0x9f -> (UtfTail1, setByte2 point word)
+  _                          -> throwDecodeError
+
+decode Utf843f0 point word = case word of
+  w | 0x90 <= w && w <= 0xbf -> (UtfTail2, setByte3 point word)
+  _                          -> throwDecodeError
+
+decode Utf843f4 point word = case word of
+  w | 0x80 <= w && w <= 0x8f -> (UtfTail2, setByte3 point word)
+  _                          -> throwDecodeError
+
+decode UtfTail3 point word = case word of
+  w | 0x80 <= w && w <= 0xbf -> (UtfTail2, setByte3 point word)
+  _                          -> throwDecodeError
+
+decode UtfTail2 point word = case word of
+  w | 0x80 <= w && w <= 0xbf -> (UtfTail1, setByte2 point word)
+  _                          -> throwDecodeError
+
+decode UtfTail1 point word = case word of
+  w | 0x80 <= w && w <= 0xbf -> (UtfGround, setByte1 point word)
+
+{-# INLINE decode #-}
 
 decodeHex :: Word8 -> Word16
 decodeHex 48  = 0  -- '0' 
@@ -65,6 +118,7 @@ decodeHex 101 = 14 -- 'e'
 decodeHex 70  = 15 -- 'F' 
 decodeHex 102 = 15 -- 'f' 
 decodeHex _ = throwDecodeError
+{-# INLINE decodeHex #-}
 
 unescapeText' :: ByteString -> Text
 unescapeText' bs = runText $ \done -> do
@@ -75,19 +129,29 @@ unescapeText' bs = runText $ \done -> do
     when ( finalState /= StateNone)
       throwDecodeError
 
-    done dest undefined -- TODO: pos, pos-1??? XXX
+    done dest pos -- TODO: pos, pos-1??? XXX
 
     where
       len = B.length bs
 
+      runUtf dest pos st point c = case decode st point c of
+        (UtfGround, 92) -> -- \
+            return (pos, StateBackslash)
+        (UtfGround, w) | w <= 0xffff -> 
+            writeAndReturn dest pos (fromIntegral w) StateNone
+        (UtfGround, w) -> do
+            write dest pos (0xd7c0 + fromIntegral (w `shiftR` 10))
+            writeAndReturn dest (pos + 1) (0xdc00 + fromIntegral (w .&. 0x3ff)) StateNone
+        (st, p) -> 
+            return (pos, StateUtf st p)
+
       f' dest m c = m >>= \s -> f dest s c
 
       -- No pending state.
-      f _ (pos, StateNone) c = undefined
-				-- TODO: c is a Word8, need to build a Word32??? XXX
+      f dest (pos, StateNone) c = runUtf dest pos UtfGround 0 c
 
       -- In the middle of parsing a UTF string.
-      f _ (pos, StateUtf point st) c = undefined
+      f dest (pos, StateUtf st point) c = runUtf dest pos st point c
 
       -- In the middle of escaping a backslash.
       f dest (pos, StateBackslash)  34 = writeAndReturn dest pos 34 StateNone -- "
@@ -108,29 +172,72 @@ unescapeText' bs = runText $ \done -> do
 
       f _ (pos, StateU1 w') c = 
         let w = decodeHex c in
-        return (pos, StateU1 (w' .|. (w `shiftL` 8)))
+        return (pos, StateU2 (w' .|. (w `shiftL` 8)))
 
       f _ (pos, StateU2 w') c = 
         let w = decodeHex c in
-        return (pos, StateU1 (w' .|. (w `shiftL` 4)))
+        return (pos, StateU3 (w' .|. (w `shiftL` 4)))
 
-      f _ (pos, StateU3 w') c = 
+      f dest (pos, StateU3 w') c = 
         let w = decodeHex c in
-				let v = w' .|. w in
-				undefined -- TODO: Check for surrogates... XXX
-				writeAndReturn 
+        let u = w' .|. w in
+
+        -- Get next state based on surrogates.
+        let st = 
+              if u >= 0xd800 && u <= 0xdbff then -- High surrogate.
+                StateS0
+              else if u >= 0xdc00 && u <= 0xdfff then -- Low surrogate.
+                throwDecodeError
+              else
+                StateNone
+        in
+        writeAndReturn dest pos u st
+
+      -- Handle surrogates.
+      f _ (pos, StateS0) 92 = return (pos, StateS1) -- \
+      f _              _  _ = throwDecodeError
+
+      f _ (pos, StateS1) 117 = return (pos, StateSU0) -- u
+      f _              _   _ = throwDecodeError
+
+      f _ (pos, StateSU0) c = 
+        let w = decodeHex c in
+        return (pos, StateSU1 (w `shiftL` 12))
+
+      f _ (pos, StateSU1 w') c = 
+        let w = decodeHex c in
+        return (pos, StateSU2 (w' .|. (w `shiftL` 8)))
+
+      f _ (pos, StateSU2 w') c = 
+        let w = decodeHex c in
+        return (pos, StateSU3 (w' .|. (w `shiftL` 4)))
+
+      f dest (pos, StateSU3 w') c = 
+        let w = decodeHex c in
+        let u = w' .|. w in
+
+        -- Check if not low surrogate.
+        if u < 0xdc00 || u > 0xdfff then
+          throwDecodeError
+        else
+          writeAndReturn dest pos u StateNone
 
 {-# INLINE unescapeText' #-}
 
--- Is this a Word16???
+write dest pos char =
+  A.unsafeWrite dest pos char
+{-# INLINE write #-}
+
 writeAndReturn dest pos char res = do
-  undefined
-  -- writeWord16Array# dest pos char
-  -- return (pos + 1, res)
+  write dest pos char
+  return (pos + 1, res)
+{-# INLINE writeAndReturn #-}
       
+throwDecodeError :: a
 throwDecodeError = 
   let desc = "Data.Text.Internal.Encoding.decodeUtf8: Invalid UTF-8 stream" in
   throw (DecodeError desc Nothing)
+{-# INLINE throwDecodeError #-}
 
 
 
