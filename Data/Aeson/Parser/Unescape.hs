@@ -46,11 +46,18 @@ data State =
   deriving (Eq)
 
 setByte1 point word = point .|. fromIntegral (word .&. 0x3f)
+{-# INLINE setByte1 #-}
 setByte2 point word = point .|. ((fromIntegral $ word .&. 0x3f) `shiftL` 6)
+{-# INLINE setByte2 #-}
 setByte2Top point word = point .|. ((fromIntegral $ word .&. 0x1f) `shiftL` 6)
+{-# INLINE setByte2Top #-}
 setByte3 point word = point .|. ((fromIntegral $ word .&. 0x3f) `shiftL` 12)
+{-# INLINE setByte3 #-}
 setByte3Top point word = point .|. ((fromIntegral $ word .&. 0xf) `shiftL` 12)
+{-# INLINE setByte3Top #-}
 setByte4 point word = point .|. ((fromIntegral $ word .&. 0x7) `shiftL` 18)
+{-# INLINE setByte4 #-}
+
 
 decode :: Utf -> Word32 -> Word8 -> (Utf, Word32)
 decode UtfGround point word = case word of
@@ -145,7 +152,11 @@ unescapeText' bs = runText $ \done -> do
         (st, p) -> 
             return (pos, StateUtf st p)
 
+      {-# INLINE runUtf #-}
+
       f' dest m c = m >>= \s -> f dest s c
+
+      {-# INLINE f' #-}
 
       -- No pending state.
       f dest (pos, StateNone) c = runUtf dest pos UtfGround 0 c
@@ -221,6 +232,8 @@ unescapeText' bs = runText $ \done -> do
           throwDecodeError
         else
           writeAndReturn dest pos u StateNone
+
+      {-# INLINE f #-}
 
 {-# INLINE unescapeText' #-}
 
