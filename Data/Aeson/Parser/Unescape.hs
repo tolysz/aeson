@@ -195,10 +195,10 @@ unescapeText' bs = runText $ \done -> do
 
       -- Handle surrogates.
       f _ (pos, StateS0) 92 = return (pos, StateS1) -- \
-      f _              _  _ = throwDecodeError
+      f _ (  _, StateS0)  _ = throwDecodeError
 
       f _ (pos, StateS1) 117 = return (pos, StateSU0) -- u
-      f _              _   _ = throwDecodeError
+      f _ (  _, StateS1)   _ = throwDecodeError
 
       f _ (pos, StateSU0) c = 
         let w = decodeHex c in
