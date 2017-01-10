@@ -45,7 +45,9 @@ data State =
   | StateSU3 !Word16
   deriving (Eq)
 
--- Referenced: https://github.com/jwilm/vte/blob/master/utf8parse/src/table.rs.in
+-- References: 
+-- http://bjoern.hoehrmann.de/utf-8/decoder/dfa/
+-- https://github.com/jwilm/vte/blob/master/utf8parse/src/table.rs.in
 setByte1 point word = point .|. fromIntegral (word .&. 0x3f)
 {-# INLINE setByte1 #-}
 setByte2 point word = point .|. ((fromIntegral $ word .&. 0x3f) `shiftL` 6)
