@@ -8,8 +8,9 @@ module Data.Aeson.Parser.Unescape (
 
 import           Control.Exception          (evaluate, throw, try)
 import           Control.Monad              (when)
+import           Control.Monad.ST           (ST)
 import           Data.ByteString            as B
-import           Data.Bits                  (shiftL, shiftR, (.&.), (.|.))
+import           Data.Bits                  (shiftL, shiftR, (.&.), (.|.), Bits(..))
 import           Data.Text                  (Text)
 import qualified Data.Text.Array            as A
 import           Data.Text.Encoding.Error   (UnicodeException (..))
@@ -48,6 +49,9 @@ data State =
 -- References: 
 -- http://bjoern.hoehrmann.de/utf-8/decoder/dfa/
 -- https://github.com/jwilm/vte/blob/master/utf8parse/src/table.rs.in
+setByte1, setByte2, setByte2Top, setByte3, setByte3Top, setByte4
+  :: (Num a1, Bits a, Bits a1,Integral a)
+  => a1 -> a -> a1
 setByte1 point word = point .|. fromIntegral (word .&. 0x3f)
 {-# INLINE setByte1 #-}
 setByte2 point word = point .|. ((fromIntegral $ word .&. 0x3f) `shiftL` 6)
@@ -100,6 +104,7 @@ decode UtfTail2 point word = case word of
 
 decode UtfTail1 point word = case word of
   w | 0x80 <= w && w <= 0xbf -> (UtfGround, setByte1 point word)
+  _                          -> throwDecodeError
 
 {-# INLINE decode #-}
 
@@ -151,8 +156,8 @@ unescapeText' bs = runText $ \done -> do
         (UtfGround, w) -> do
             write dest pos (0xd7c0 + fromIntegral (w `shiftR` 10))
             writeAndReturn dest (pos + 1) (0xdc00 + fromIntegral (w .&. 0x3ff)) StateNone
-        (st, p) -> 
-            return (pos, StateUtf st p)
+        (st', p) ->
+            return (pos, StateUtf st' p)
 
       {-# INLINE runUtf #-}
 
@@ -175,8 +180,8 @@ unescapeText' bs = runText $ \done -> do
       f dest (pos, StateBackslash) 110 = writeAndReturn dest pos 10 StateNone -- n
       f dest (pos, StateBackslash) 114 = writeAndReturn dest pos 13 StateNone -- r
       f dest (pos, StateBackslash) 116 = writeAndReturn dest pos  9 StateNone -- t
-      f dest (pos, StateBackslash) 117 = return (pos, StateU0)                -- u
-      f dest (pos, StateBackslash) _   = throwDecodeError
+      f _dest (pos, StateBackslash) 117 = return (pos, StateU0)               -- u
+      f _dest (_pos, StateBackslash) _   = throwDecodeError
 
       -- Processing '\u'.
       f _ (pos, StateU0) c = 
@@ -238,11 +243,12 @@ unescapeText' bs = runText $ \done -> do
       {-# INLINE f #-}
 
 {-# INLINE unescapeText' #-}
-
+write :: A.MArray s -> Int -> Word16 -> ST s ()
 write dest pos char =
   A.unsafeWrite dest pos char
 {-# INLINE write #-}
 
+writeAndReturn :: A.MArray s -> Int -> Word16 -> t -> ST s (Int, t)
 writeAndReturn dest pos char res = do
   write dest pos char
   return (pos + 1, res)
@@ -253,51 +259,6 @@ throwDecodeError =
   let desc = "Data.Text.Internal.Encoding.decodeUtf8: Invalid UTF-8 stream" in
   throw (DecodeError desc Nothing)
 {-# INLINE throwDecodeError #-}
-
-
-
-
-{-
-import           Control.Exception          (evaluate, throw, try)
-import           Control.Monad.ST.Unsafe    (unsafeIOToST, unsafeSTToIO)
-import           Data.ByteString            as B
-import           Data.ByteString.Internal   as B hiding (c2w)
-import qualified Data.Text.Array            as A
-import           Data.Text.Encoding.Error   (UnicodeException (..))
-import           Data.Text.Internal         (Text (..))
-import           Data.Text.Internal.Private (runText)
-import           Data.Text.Unsafe           (unsafeDupablePerformIO)
-import           Data.Word                  (Word8)
-import           Foreign.C.Types            (CInt (..), CSize (..))
-import           Foreign.ForeignPtr         (withForeignPtr)
-import           Foreign.Marshal.Utils      (with)
-import           Foreign.Ptr                (Ptr, plusPtr)
-import           Foreign.Storable           (peek)
-import           GHC.Base                   (MutableByteArray#)
-
-foreign import ccall unsafe "_js_decode_string" c_js_decode
-    :: MutableByteArray# s -> Ptr CSize
-    -> Ptr Word8 -> Ptr Word8 -> IO CInt
-
-unescapeText' :: ByteString -> Text
-unescapeText' (PS fp off len) = runText $ \done -> do
-  let go dest = withForeignPtr fp $ \ptr ->
-        with (0::CSize) $ \destOffPtr -> do
-          let end = ptr `plusPtr` (off + len)
-              loop curPtr = do
-                res <- c_js_decode (A.maBA dest) destOffPtr curPtr end
-                case res of
-                  0 -> do
-                    n <- peek destOffPtr
-                    unsafeSTToIO (done dest (fromIntegral n))
-                  _ ->
-                    throw (DecodeError desc Nothing)
-          loop (ptr `plusPtr` off)
-  (unsafeIOToST . go) =<< A.new len
- where
-  desc = "Data.Text.Internal.Encoding.decodeUtf8: Invalid UTF-8 stream"
-{-# INLINE unescapeText' #-}
--}
 
 unescapeText :: ByteString -> Either UnicodeException Text
 unescapeText = unsafeDupablePerformIO . try . evaluate . unescapeText'
