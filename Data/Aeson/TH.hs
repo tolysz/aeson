@@ -122,7 +122,7 @@ import Control.Applicative ((<|>))
 import Data.Aeson (Object, (.:), FromJSON(..), FromJSON1(..), FromJSON2(..), ToJSON(..), ToJSON1(..), ToJSON2(..))
 import Data.Aeson.Types (Options(..), Parser, SumEncoding(..), Value(..), defaultOptions, defaultTaggedObject)
 import Data.Aeson.Types.Internal ((<?>), JSONPathElement(Key))
-import Data.Aeson.Types.FromJSON (parseOptionalFieldWith)
+import Data.Aeson.Types.FromJSON (parseOptionalFieldWith, parsePossibleFieldWith)
 import Data.Aeson.Types.ToJSON (fromPairs, pair)
 import Control.Monad (liftM2, unless, when)
 import Data.Foldable (foldr')
@@ -133,6 +133,7 @@ import Data.List (foldl', genericLength, intercalate, partition, union)
 import Data.List.NonEmpty ((<|), NonEmpty((:|)))
 import Data.Map (Map)
 import Data.Maybe (catMaybes, fromMaybe, mapMaybe)
+import Data.Possible ( Possible(HaveNull, MissingData,HaveData) )
 import qualified Data.Monoid as Monoid
 import Data.Set (Set)
 #if MIN_VERSION_template_haskell(2,8,0)
@@ -471,17 +472,21 @@ argsToValue target jc tvMap opts multiCons
         let pairs | omitNothingFields opts = infixApp maybeFields
                                                       [|(Monoid.<>)|]
                                                       restFields
-                  | otherwise = mconcatE (map pureToPair argCons)
+                  | otherwise = infixApp (mconcatE (map pureToPair argCons))
+                                                      [|(Monoid.<>)|]
+                                                      possibleFields
 
-            argCons = zip3 (map varE args) argTys' fields
+            argCons' = zip3 (map varE args) argTys' fields
+            (possibles, argCons) = partition isPossible argCons'
 
             maybeFields = mconcatE (map maybeToPair maybes)
+            possibleFields = mconcatE (map (maybeToPair . possibleToMaybe) possibles)
 
             restFields = mconcatE (map pureToPair rest)
 
             (maybes0, rest0) = partition isMaybe argCons
             (options, rest) = partition isOption rest0
-            maybes = maybes0 ++ map optionToMaybe options
+            maybes = maybes0 ++ (map optionToMaybe options) ++ (map possibleToMaybe possibles)
 
             maybeToPair = toPairLifted True
             pureToPair = toPairLifted False
@@ -529,6 +534,18 @@ isOption _                       = False
 
 optionToMaybe :: (ExpQ, b, c) -> (ExpQ, b, c)
 optionToMaybe (a, b, c) = ([|Semigroup.getOption|] `appE` a, b, c)
+
+isPossible :: (a, Type, c) -> Bool
+isPossible (_,AppT (ConT t) _, _) = t == ''Possible
+isPossible _                    = False
+
+castPossible :: Possible a -> Maybe (Possible a)
+castPossible (MissingData) = Nothing
+castPossible (HaveNull)    = Just (HaveNull)
+castPossible (HaveData a)  = Just (HaveData a)
+
+possibleToMaybe :: (ExpQ, b, c) -> (ExpQ, b, c)
+possibleToMaybe (a, b, c) = ([|castPossible|] `appE` a, b, c)
 
 (<^>) :: ExpQ -> ExpQ -> ExpQ
 (<^>) a b = infixApp a [|(E.><)|] b
@@ -1114,6 +1131,9 @@ instance OVERLAPPABLE_ LookupField a where
 
 instance INCOHERENT_ LookupField (Maybe a) where
     lookupField pj _ _ = parseOptionalFieldWith pj
+
+instance INCOHERENT_ LookupField (Possible a) where
+    lookupField pj _ _ = parsePossibleFieldWith pj
 
 instance INCOHERENT_ LookupField (Semigroup.Option a) where
     lookupField pj tName rec obj key =
@@ -1784,6 +1804,8 @@ valueConName (String _) = "String"
 valueConName (Number _) = "Number"
 valueConName (Bool   _) = "Boolean"
 valueConName Null       = "Null"
+valueConName Missing    = "Missing"
+valueConName (RawNumber _) = "RawNumber"
 
 applyCon :: Name -> Name -> Pred
 applyCon con t =

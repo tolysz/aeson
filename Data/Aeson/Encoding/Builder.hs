@@ -60,6 +60,8 @@ import qualified Data.Vector as V
 -- Use this function if you are encoding over the wire, or need to
 -- prepend or append further bytes to the encoded JSON value.
 encodeToBuilder :: Value -> Builder
+encodeToBuilder Missing    = null_
+encodeToBuilder (RawNumber s) = unquoted s
 encodeToBuilder Null       = null_
 encodeToBuilder (Bool b)   = bool b
 encodeToBuilder (Number n) = scientific n
@@ -88,7 +90,7 @@ array v
 
 -- Encode a JSON object.
 object :: HMS.HashMap T.Text Value -> Builder
-object m = case HMS.toList m of
+object m = case (filter ((/=) Missing . snd) ) (HMS.toList m) of
     (x:xs) -> B.char8 '{' <> one x <> foldr withComma (B.char8 '}') xs
     _      -> emptyObject_
   where

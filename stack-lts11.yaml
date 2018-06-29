@@ -1,12 +1,11 @@
-resolver: nightly-2019-01-23
+resolver: lts-11.15
 packages:
 - '.'
-- attoparsec-iso8601
 flags:
   aeson:
     fast: true
+    cffi: false
   attoparsec-iso8601:
     fast: true
 extra-deps:
 - possible-0.1.0.5
-

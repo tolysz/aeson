@@ -67,11 +67,13 @@ encodeToTextBuilder =
                       V.foldr f (singleton ']') (V.unsafeTail v)
       where f a z = singleton ',' <> go a <> z
     go (Object m) = {-# SCC "go/Object" #-}
-        case H.toList m of
+        case  (filter ((/=) Missing . snd) ) (H.toList m) of
           (x:xs) -> singleton '{' <> one x <> foldr f (singleton '}') xs
           _      -> "{}"
       where f a z     = singleton ',' <> one a <> z
             one (k,v) = string k <> singleton ':' <> go v
+    go Missing    = {-# SCC "go/Missing" #-} "" -- actually having it in the output will create invalid JSON, thus we give null
+    go (RawNumber s) = {-# SCC "go/RawNumber" #-} fromText s -- be careful not every string represent a number
 
 string :: T.Text -> Builder
 string s = {-# SCC "string" #-} singleton '"' <> quote s <> singleton '"'

@@ -11,6 +11,8 @@ cabal-version:  >= 1.10
 
 executable testaeson
   main-is: Main.hs
+  other-modules:
+      Paths_testaeson
   hs-source-dirs:
       src
   build-depends:

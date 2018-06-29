@@ -30,3 +30,25 @@ executable aeson-example-th
     base,
     base-compat,
     bytestring
+
+executable aeson-example-possible-th
+  main-is: PossibleTH.hs
+  ghc-options: -Wall
+  build-depends:
+    aeson >= 0.10,
+    base,
+    bytestring,
+    possible,
+    ghc-prim,
+    unordered-containers
+
+executable aeson-example-possible-generic
+  main-is: PossibleGen.hs
+  ghc-options: -Wall
+  build-depends:
+    aeson >= 0.10,
+    base,
+    bytestring,
+    possible,
+    ghc-prim,
+    unordered-containers
