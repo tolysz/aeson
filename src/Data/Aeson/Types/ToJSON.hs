@@ -136,6 +136,8 @@ import qualified Data.Vector.Unboxed as VU
 import qualified Data.Aeson.Encoding.Builder as EB
 import qualified Data.ByteString.Builder as B
 
+import Data.Possible
+
 import qualified GHC.Exts as Exts
 import qualified Data.Primitive.Array as PM
 import qualified Data.Primitive.SmallArray as PM
@@ -1104,6 +1106,17 @@ instance INCOHERENT_
 
 instance INCOHERENT_
     ( Selector s
+    , GToJSON' enc arity (K1 i (Possible a))
+    , KeyValuePair enc pairs
+    , Monoid pairs
+    ) => RecordToPairs enc pairs arity (S1 s (K1 i (Possible a)))
+  where
+    recordToPairs _ _ (M1 k1) | K1 MissingData <- k1 = mempty
+    recordToPairs opts targs m1 = fieldToPair opts targs m1
+    {-# INLINE recordToPairs #-}
+
+instance INCOHERENT_
+    ( Selector s
     , GToJSON' enc arity (K1 i (Maybe a))
     , KeyValuePair enc pairs
     , Monoid pairs
@@ -1256,6 +1269,23 @@ instance (ToJSON a) => ToJSON (Maybe a) where
     toEncoding = toEncoding1
     {-# INLINE toEncoding #-}
 
+instance ToJSON1 Possible where
+    liftToJSON t _ (HaveData a) = t a
+    liftToJSON _  _ HaveNull  = Null
+    liftToJSON _  _ MissingData  = Missing
+    {-# INLINE liftToJSON #-}
+
+    liftToEncoding t _ (HaveData a) = t a
+    liftToEncoding _  _ HaveNull  = E.null_
+    liftToEncoding _  _ MissingData = E.null_
+    {-# INLINE liftToEncoding #-}
+
+instance (ToJSON a) => ToJSON (Possible a) where
+    toJSON = toJSON1
+    {-# INLINE toJSON #-}
+
+    toEncoding = toEncoding1
+    {-# INLINE toEncoding #-}
 
 instance ToJSON2 Either where
     liftToJSON2  toA _ _toB _ (Left a)  = Object $ H.singleton "Left"  (toA a)

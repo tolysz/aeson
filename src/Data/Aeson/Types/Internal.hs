@@ -362,6 +362,8 @@ data Value = Object !Object
            | Number !Scientific
            | Bool !Bool
            | Null
+           | Missing
+           | RawNumber !Text
              deriving (Eq, Read, Show, Typeable, Data, Generic)
 
 -- |
@@ -395,6 +397,8 @@ instance NFData Value where
     rnf (Number n) = rnf n
     rnf (Bool b)   = rnf b
     rnf Null       = ()
+    rnf Missing    = ()
+    rnf (RawNumber s) = rnf s
 
 instance IsString Value where
     fromString = String . pack
@@ -408,12 +412,17 @@ hashValue s (String str) = s `hashWithSalt` (2::Int) `hashWithSalt` str
 hashValue s (Number n)   = s `hashWithSalt` (3::Int) `hashWithSalt` n
 hashValue s (Bool b)     = s `hashWithSalt` (4::Int) `hashWithSalt` b
 hashValue s Null         = s `hashWithSalt` (5::Int)
+hashValue s Missing      = s `hashWithSalt` (6::Int)
+hashValue s (RawNumber str) = s `hashWithSalt` (7::Int) `hashWithSalt` str
 
 instance Hashable Value where
     hashWithSalt = hashValue
 
 -- @since 0.11.0.0
 instance TH.Lift Value where
+    lift (RawNumber t) = [| RawNumber (pack s) |]
+      where s = unpack t
+    lift Missing= [| Missing |]
     lift Null = [| Null |]
     lift (Bool b) = [| Bool b |]
     lift (Number n) = [| Number (S.scientific c e) |]

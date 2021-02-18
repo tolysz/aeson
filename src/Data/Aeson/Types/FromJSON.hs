@@ -71,17 +71,19 @@ module Data.Aeson.Types.FromJSON
     -- ** Operators
     , (.:)
     , (.:?)
+    , (.:??)
     , (.:!)
     , (.!=)
 
     -- * Internal
     , parseOptionalFieldWith
+    , parsePossibleFieldWith
     ) where
 
 import Prelude.Compat
 
 import Control.Applicative ((<|>), Const(..), liftA2)
-import Control.Monad (zipWithM)
+import Control.Monad (zipWithM, join)
 import Data.Aeson.Internal.Functions (mapKey)
 import Data.Aeson.Parser.Internal (eitherDecodeWith, jsonEOF)
 import Data.Aeson.Types.Generic
@@ -150,6 +152,8 @@ import qualified Data.Vector.Generic as VG
 import qualified Data.Vector.Primitive as VP
 import qualified Data.Vector.Storable as VS
 import qualified Data.Vector.Unboxed as VU
+
+import Data.Possible
 
 import qualified GHC.Exts as Exts
 import qualified Data.Primitive.Array as PM
@@ -237,6 +241,14 @@ parseOptionalFieldWith pj obj key =
      Nothing -> pure Nothing
      Just v  -> pj v <?> Key key
 {-# INLINE parseOptionalFieldWith #-}
+
+parsePossibleFieldWith :: (Value -> Parser (Possible a))
+                       -> Object -> Text -> Parser (Possible a)
+parsePossibleFieldWith pj obj key =
+    case H.lookup key obj of
+     Nothing -> pure MissingData
+     Just v  -> pj v <?> Key key
+{-# INLINE parsePossibleFieldWith #-}
 
 -------------------------------------------------------------------------------
 -- Generics
@@ -542,6 +554,8 @@ typeOf v = case v of
     Number _ -> "Number"
     Bool _   -> "Boolean"
     Null     -> "Null"
+    RawNumber _ -> "RawNumber"
+    Missing  -> "Missing"
 
 -------------------------------------------------------------------------------
 -- Lifings of FromJSON and ToJSON to unary and binary type constructors
@@ -821,6 +835,13 @@ ifromJSON = iparse parseJSON
 {-# INLINE (.:?) #-}
 
 -- | Retrieve the value associated with the given key of an 'Object'.
+-- This is a bit more sensitive version than '(.:?)' as will tell exactly
+-- if the key was not present or it had a 'null' value.
+(.:??) :: (FromJSON a) => Object -> Text -> Parser (Possible a)
+(.:??) = explicitParseFieldPossible parseJSON
+{-# INLINE (.:??) #-}
+
+-- | Retrieve the value associated with the given key of an 'Object'.
 -- The result is 'Nothing' if the key is not present or 'empty' if the
 -- value cannot be converted to the desired type.
 --
@@ -851,6 +872,7 @@ parseFieldMaybe' = (.:!)
 explicitParseField :: (Value -> Parser a) -> Object -> Text -> Parser a
 explicitParseField p obj key = case H.lookup key obj of
     Nothing -> fail $ "key " ++ show key ++ " not found"
+    Just Missing -> fail $ "key " ++ show key ++ " not found"
     Just v  -> p v <?> Key key
 {-# INLINE explicitParseField #-}
 
@@ -858,13 +880,24 @@ explicitParseField p obj key = case H.lookup key obj of
 explicitParseFieldMaybe :: (Value -> Parser a) -> Object -> Text -> Parser (Maybe a)
 explicitParseFieldMaybe p obj key = case H.lookup key obj of
     Nothing -> pure Nothing
+    Just Missing -> pure Nothing
     Just v  -> liftParseJSON p (listParser p) v <?> Key key -- listParser isn't used by maybe instance.
 {-# INLINE explicitParseFieldMaybe #-}
+
+-- | Variant of '.:?' with explicit parser function.
+explicitParseFieldPossible :: (Value -> Parser a) -> Object -> Text -> Parser (Possible a)
+explicitParseFieldPossible p obj key = case H.lookup key obj of
+    Nothing      -> pure MissingData
+    Just Missing -> pure MissingData
+    Just Null    -> pure HaveNull
+    Just v  -> HaveData <$> p v <?> Key key
+{-# INLINE explicitParseFieldPossible #-}
 
 -- | Variant of '.:!' with explicit parser function.
 explicitParseFieldMaybe' :: (Value -> Parser a) -> Object -> Text -> Parser (Maybe a)
 explicitParseFieldMaybe' p obj key = case H.lookup key obj of
     Nothing -> pure Nothing
+    Just Missing -> pure Nothing
     Just v  -> Just <$> p v <?> Key key
 {-# INLINE explicitParseFieldMaybe' #-}
 
@@ -1324,6 +1357,13 @@ instance INCOHERENT_ (Selector s, FromJSON a) =>
         label = fieldLabelModifier opts sname
         sname = selName (undefined :: M1 _i s _f _p)
 
+instance INCOHERENT_ (Selector s, FromJSON a) =>
+         RecordFromJSON' arity (S1 s (K1 i (Possible a))) where
+    recordParseJSON' (_ :* _ :* opts :* _) obj = (M1 . K1) . join <$> obj .:?? pack label
+        where
+          label = fieldLabelModifier opts sname
+          sname =selName (undefined :: t s (K1 i (Possible a)) p)
+
 -- Parse an Option like a Maybe.
 instance INCOHERENT_ (Selector s, FromJSON a) =>
          RecordFromJSON' arity (S1 s (K1 i (Semigroup.Option a))) where
@@ -1474,7 +1514,15 @@ instance (FromJSON a) => FromJSON (Maybe a) where
     parseJSON = parseJSON1
     {-# INLINE parseJSON #-}
 
+instance FromJSON1 Possible where
+    liftParseJSON _ _ Null    = pure HaveNull
+    liftParseJSON _ _ Missing = pure MissingData
+    liftParseJSON p _ a       = HaveData <$> p a
+    {-# INLINE liftParseJSON #-}
 
+instance (FromJSON a) => FromJSON (Possible a) where
+    parseJSON = parseJSON1
+    {-# INLINE parseJSON #-}
 
 instance FromJSON2 Either where
     liftParseJSON2 pA _ pB _ (Object (H.toList -> [(key, value)]))

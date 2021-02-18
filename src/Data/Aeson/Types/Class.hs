@@ -94,6 +94,7 @@ module Data.Aeson.Types.Class
     -- ** Operators
     , (.:)
     , (.:?)
+    , (.:??)
     , (.:!)
     , (.!=)
     ) where

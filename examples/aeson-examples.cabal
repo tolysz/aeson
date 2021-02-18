@@ -111,3 +111,27 @@ executable aeson-example-th
     , base         >=0 && <5
     , base-compat
     , bytestring
+
+executable aeson-example-possible-th
+  hs-source-dirs:   src/
+  main-is: PossibleTH.hs
+  ghc-options: -Wall
+  build-depends:
+    aeson >= 0.10,
+    base,
+    bytestring,
+    possible,
+    ghc-prim,
+    unordered-containers
+
+executable aeson-example-possible-generic
+  hs-source-dirs:   src/
+  main-is: PossibleGen.hs
+  ghc-options: -Wall
+  build-depends:
+    aeson >= 0.10,
+    base,
+    bytestring,
+    possible,
+    ghc-prim,
+    unordered-containers

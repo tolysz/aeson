@@ -9,3 +9,5 @@ flags:
     fast: true
 extra-deps:
 - generic-deriving-1.12.4
+- possible-0.1.0.6
+
